@@ -11,30 +11,32 @@ from telegram.ext import (
 DB_PATH = "breast_bot.db"
 COOLDOWN_SECONDS = 60 * 60  # 1 час
 
-# 🔑 токен (как просил — прямо в коде)
+# 🔑 токен
 TOKEN = "8383787249:AAENs2jqlQAIV8FdgIFWPXDw7CUkFSFKRZY"
 
-# 👑 список админов (замени на реальные ID)
-ADMINS = [1338785758, 6540420056]
+# 👑 список админов
+ADMINS = [1338785758, 6540420056]  # замени на реальные ID
 
+
+# === БАЗА ДАННЫХ ===
 def init_db():
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    # per-chat прогресс
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS progress (
-            chat_id     INTEGER NOT NULL,
-            user_id     INTEGER NOT NULL,
+            chat_id      INTEGER NOT NULL,
+            user_id      INTEGER NOT NULL,
             display_name TEXT,
-            last_ts     INTEGER DEFAULT 0,
-            total_added REAL    DEFAULT 0,
+            last_ts      INTEGER DEFAULT 0,
+            total_added  REAL    DEFAULT 0,
             PRIMARY KEY (chat_id, user_id)
         )
         """
     )
     con.commit()
     con.close()
+
 
 def get_row(chat_id: int, user_id: int):
     con = sqlite3.connect(DB_PATH)
@@ -43,19 +45,16 @@ def get_row(chat_id: int, user_id: int):
                 (chat_id, user_id))
     row = cur.fetchone()
     con.close()
-    return row  # None | (last_ts, total_added, display_name)
+    return row
+
 
 def upsert_row(chat_id: int, user_id: int, *, display_name: str = None,
                last_ts: int = None, total_added: float = None):
-    """Создаёт запись при отсутствии и обновляет переданные поля."""
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    # ensure exists
     cur.execute("INSERT OR IGNORE INTO progress (chat_id, user_id, display_name, last_ts, total_added) VALUES (?, ?, ?, 0, 0.0)",
                 (chat_id, user_id, display_name or ""))
-    # динамический апдейт
-    sets = []
-    params = []
+    sets, params = [], []
     if display_name is not None:
         sets.append("display_name=?"); params.append(display_name)
     if last_ts is not None:
@@ -68,13 +67,18 @@ def upsert_row(chat_id: int, user_id: int, *, display_name: str = None,
     con.commit()
     con.close()
 
+
+# === УТИЛИТЫ ===
 def fmt_left(seconds: int) -> str:
     m, s = divmod(seconds, 60)
     return (f"{m} мин {s} сек" if m and s else f"{m} мин" if m else f"{s} сек")
 
+
 def mention_html_by_id(user_id: int, name: str) -> str:
     return f'<a href="tg://user?id={user_id}">{html.escape(name)}</a>'
 
+
+# === КОМАНДЫ ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
@@ -90,9 +94,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = int(time.time())
     elapsed = now - last_ts
 
-    # обновим имя на всякий случай
-    upsert_row(chat_id, uid, display_name=display_name)
-
     if elapsed < COOLDOWN_SECONDS:
         left = COOLDOWN_SECONDS - elapsed
         await update.message.reply_html(
@@ -103,13 +104,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     inc = round(uniform(1, 5), 2)
     total_added = round(total_added + inc, 2)
-    upsert_row(chat_id, uid, last_ts=now, total_added=total_added)
+
+    # ФИКС: обновляем все значения
+    upsert_row(chat_id, uid, display_name=display_name, last_ts=now, total_added=total_added)
 
     await update.message.reply_html(
         f"🎉 {user.mention_html()} получил(а) прирост <b>+{inc} см</b>!\n"
         f"📈 Суммарно в этом чате: <b>{total_added} см</b>.\n"
         f"⛔️ Повторно — через 1 час."
     )
+
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -130,27 +134,27 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 {user.mention_html()}, ваш суммарный прирост в этом чате: <b>{total_added} см</b>.\n{tip}"
     )
 
+
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
     user = update.effective_user
-    uid = user.id
-    if uid not in ADMINS:
+    chat_id = update.effective_chat.id
+    if user.id not in ADMINS:
         await update.message.reply_text("🚫 Эта команда доступна только для админов.")
         return
-    row = get_row(chat_id, uid)
-    if row is None:
-        upsert_row(chat_id, uid, last_ts=0, total_added=0.0)
+
+    # если админ сделал reply — сбрасываем тому человеку
+    if update.message.reply_to_message and update.message.reply_to_message.from_user:
+        target = update.message.reply_to_message.from_user
+        upsert_row(chat_id, target.id, last_ts=0)  # только кулдаун
+        await update.message.reply_html(f"♻️ Кулдаун сброшен у {target.mention_html()}")
     else:
-        _, total_added, _ = row
-        upsert_row(chat_id, uid, last_ts=0, total_added=total_added)
-    await update.message.reply_text("✅ Кулдаун сброшен. Можно снова /start.")
+        # иначе сбрасываем самому админу
+        upsert_row(chat_id, user.id, last_ts=0)
+        await update.message.reply_text("♻️ Ваш кулдаун сброшен.")
 
-# Лидерборд по текущему чату
+
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    chat_id = chat.id
-
-    # сколько показать: /top 5  (по умолчанию 10)
+    chat_id = update.effective_chat.id
     try:
         limit = int(context.args[0]) if context.args else 10
         limit = max(1, min(50, limit))
@@ -178,7 +182,7 @@ async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_html("🏆 Топ по этому чату:\n" + "\n".join(lines))
 
-# «мацать» — без слэша, работает только по reply
+
 async def macat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     actor = update.effective_user
@@ -189,6 +193,7 @@ async def macat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"🤏 {actor.mention_html()} помацал(а) {target.mention_html()} 😳"
     await msg.reply_html(text)
 
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Команды:\n"
@@ -197,26 +202,26 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/top [N] — топ участников этого чата\n"
         "/help — помощь\n"
         "(в группе) ответьте на сообщение и напишите «мацать»\n"
-        "(/reset — только для админов)"
+        "(/reset — только для админов, работает по reply или себе)"
     )
+
 
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
-    # команды
     app.add_handler(CommandHandler(["start", "growchest"], start))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("top", top))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset))
 
-    # мацать (нужно /setprivacy Disable у бота)
     macat_filter = filters.TEXT & filters.Regex(r"(?i)\bмацать\b") & filters.REPLY
     app.add_handler(MessageHandler(macat_filter, macat_handler))
 
     print("Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
