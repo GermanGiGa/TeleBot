@@ -118,11 +118,49 @@ async def macat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"🤏 {actor.mention_html()} помацал(а) {target.mention_html()} 😳"
     await msg.reply_html(text)
 
+# 🔥 /top — лидерборд среди УЧАСТНИКОВ ТЕКУЩЕГО ЧАТА по их глобальному total_added
+async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    try:
+        limit = int(context.args[0]) if context.args else 10
+        limit = max(1, min(50, limit))
+    except Exception:
+        limit = 10
+
+    # берём всех пользователей из глобальной таблицы и фильтруем тех, кто состоит в этом чате
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("SELECT user_id, total_added FROM users ORDER BY total_added DESC")
+    all_rows = cur.fetchall()
+    con.close()
+
+    rows = []
+    for uid, total in all_rows:
+        try:
+            member = await context.bot.get_chat_member(chat.id, uid)
+            if member.status not in ("left", "kicked"):
+                rows.append((member.user, total))  # сохраняем объект User, чтобы красиво упомянуть
+        except:
+            continue
+        if len(rows) >= limit:
+            break
+
+    if not rows:
+        await update.message.reply_text("В этом чате пока никто ничего не нарастил 😅")
+        return
+
+    lines = []
+    for i, (user_obj, total) in enumerate(rows, start=1):
+        lines.append(f"{i}. {user_obj.mention_html()} — <b>{total} см</b>")
+
+    await update.message.reply_html("🏆 Топ участников этого чата:\n" + "\n".join(lines))
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Команды:\n"
         "/start — прирост (раз в час)\n"
         "/stats — статистика\n"
+        "/top [N] — топ участников ЭТОГО чата\n"
         "/help — помощь\n"
         "(в группе) ответьте на сообщение и напишите «мацать»\n"
         "(/reset — только для админов)"
@@ -135,6 +173,7 @@ def main():
     # команды
     app.add_handler(CommandHandler(["start", "growchest"], start))
     app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("top", top))      # ← добавлен хендлер /top
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset))
 
