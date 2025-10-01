@@ -10,11 +10,11 @@ from telegram.ext import (
 DB_PATH = "breast_bot.db"
 COOLDOWN_SECONDS = 60 * 60  # 1 час
 
-# 🔑 твой токен (как просил — прямо в коде)
+# 🔑 твой токен
 TOKEN = "8383787249:AAENs2jqlQAIV8FdgIFWPXDw7CUkFSFKRZY"
 
-# 👑 список админов (впиши сюда свои user_id и друзей)
-ADMINS = [1338785758, 6540420056, 7689278428, 8147146526]  # <-- замени на реальные ID
+# 👑 список админов (впиши реальные ID)
+ADMINS = [123456789, 987654321]
 
 
 def init_db():
@@ -50,6 +50,8 @@ def get_user(user_id: int):
 
 
 def update_user(user_id: int, last_ts: int, total_added: float):
+    # ограничение значений от 0 до 1000
+    total_added = max(-10000, min(total_added, 10000))
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     cur.execute(
@@ -115,7 +117,67 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Кулдаун сброшен. Можно снова /start.")
 
 
-# «мацать» — без слэша, только если это reply на чьё-то сообщение
+async def set_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    uid = update.effective_user.id
+    if uid not in ADMINS:
+        await msg.reply_text("🚫 Эта команда только для админов.")
+        return
+    if not context.args or len(context.args) < 2:
+        await msg.reply_text("⚠️ Использование: /setSize <user_id> <число>")
+        return
+    try:
+        target_user_id = int(context.args[0])
+        size = float(context.args[1])
+        size = max(-10000, min(size, 10000))
+    except ValueError:
+        await msg.reply_text("⚠️ Неверные данные. Пример: /setSize 123456789 50")
+        return
+
+    last_ts, _ = get_user(target_user_id)
+    update_user(target_user_id, last_ts, size)
+
+    await msg.reply_html(
+        f"⚒ Размер для <a href='tg://user?id={target_user_id}'>пользователя</a> "
+        f"установлен на <b>{size} см</b>."
+    )
+
+
+async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    members = []
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    for member in await context.bot.get_chat_administrators(chat.id) + []:
+        pass  # просто чтоб был вызов
+
+    # Получаем список участников чата
+    async for m in context.bot.get_chat_administrators(chat.id):
+        members.append(m.user.id)
+
+    # Получаем участников чата
+    chat_members = []
+    async for member in context.bot.get_chat(chat.id).iter_members():
+        chat_members.append(member.user.id)
+
+    # Выбираем только тех, кто в БД
+    cur.execute("SELECT user_id, total_added FROM users")
+    rows = cur.fetchall()
+    con.close()
+
+    leaderboard = []
+    for uid, total in rows:
+        if uid in chat_members:
+            leaderboard.append((uid, total))
+
+    leaderboard.sort(key=lambda x: x[1], reverse=True)
+    text = "🏆 Топ участников этого чата:\n"
+    for i, (uid, total) in enumerate(leaderboard[:10], 1):
+        text += f"{i}. <a href='tg://user?id={uid}'>user</a> — {total:.2f} см\n"
+
+    await update.message.reply_html(text)
+
+
 async def macat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     actor = update.effective_user
@@ -127,100 +189,15 @@ async def macat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_html(text)
 
 
-# 🔥 /top — лидерборд среди УЧАСТНИКОВ ТЕКУЩЕГО ЧАТА по их глобальному total_added
-async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    try:
-        limit = int(context.args[0]) if context.args else 10
-        limit = max(1, min(50, limit))
-    except Exception:
-        limit = 10
-
-    # берём всех пользователей из глобальной таблицы и фильтруем тех, кто состоит в этом чате
-    con = sqlite3.connect(DB_PATH)
-    cur = con.cursor()
-    cur.execute("SELECT user_id, total_added FROM users ORDER BY total_added DESC")
-    all_rows = cur.fetchall()
-    con.close()
-
-    rows = []
-    for uid, total in all_rows:
-        try:
-            member = await context.bot.get_chat_member(chat.id, uid)
-            if member.status not in ("left", "kicked"):
-                rows.append((member.user, total))  # сохраняем объект User, чтобы красиво упомянуть
-        except:
-            continue
-        if len(rows) >= limit:
-            break
-
-    if not rows:
-        await update.message.reply_text("В этом чате пока никто ничего не нарастил 😅")
-        return
-
-    lines = []
-    for i, (user_obj, total) in enumerate(rows, start=1):
-        lines.append(f"{i}. {user_obj.mention_html()} — <b>{total} см</b>")
-
-    await update.message.reply_html("🏆 Топ участников этого чата:\n" + "\n".join(lines))
-
-
-# 👑 /setSize — только для админов
-# Использование:
-#   1) Ответь на сообщение человека и напиши: /setSize 123.45
-#   2) Или: /setSize <user_id> 123.45
-async def set_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    caller = update.effective_user
-    if caller.id not in ADMINS:
-        await update.message.reply_text("🚫 Эта команда доступна только для админов.")
-        return
-
+async def shchipok_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-
-    target_user_id = None
-    new_size = None
-
-    # Вариант 1: reply -> /setSize 123.45
-    if msg.reply_to_message and msg.reply_to_message.from_user:
-        if not context.args:
-            await msg.reply_text("⚠️ Использование: ответьте на сообщение и введите /setSize <число>")
-            return
-        try:
-            new_size = float(context.args[0])
-        except ValueError:
-            await msg.reply_text("⚠️ Укажите корректное число.")
-            return
-        target_user_id = msg.reply_to_message.from_user.id
-
-    # Вариант 2: /setSize <user_id> <число>
-    else:
-        if len(context.args) < 2:
-            await msg.reply_text("⚠️ Использование: /setSize <user_id> <число>  (или по reply: /setSize <число>)")
-            return
-        try:
-            target_user_id = int(context.args[0])
-        except ValueError:
-            await msg.reply_text("⚠️ Вместо <user_id> нужно указать числовой ID пользователя.")
-            return
-        try:
-            new_size = float(context.args[1])
-        except ValueError:
-            await msg.reply_text("⚠️ Укажите корректное число.")
-            return
-
-    # Обновляем БД
-    last_ts, _ = get_user(target_user_id)  # создаст запись, если нет
-    update_user(target_user_id, last_ts, float(new_size))
-
-    # Для красивого подтверждения попробуем получить профиль (если бот в чате с этим пользователем)
-    mention_html = f"<a href=\"tg://user?id={target_user_id}\">user {target_user_id}</a>"
-    try:
-        member = await context.bot.get_chat_member(update.effective_chat.id, target_user_id)
-        mention_html = member.user.mention_html()
-    except:
-        pass
-
-    await msg.reply_html(f"✅ Размер для {mention_html} установлен: <b>{float(new_size)} см</b>")
+    actor = update.effective_user
+    if not msg or not msg.reply_to_message or not msg.reply_to_message.from_user:
+        await msg.reply_text("Ответьте на сообщение человека и напишите «ущипнуть».")
+        return
+    target = msg.reply_to_message.from_user
+    text = f"👉 {actor.mention_html()} ущипнул(а) {target.mention_html()} за жопу 🍑"
+    await msg.reply_html(text)
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -228,10 +205,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Команды:\n"
         "/start — прирост (раз в час)\n"
         "/stats — статистика\n"
-        "/top [N] — топ участников ЭТОГО чата\n"
-        "/setSize — (только админы) reply: /setSize <число>  или  /setSize <user_id> <число>\n"
+        "/top — топ участников чата\n"
+        "/setSize — админская команда (установить размер)\n"
         "/help — помощь\n"
-        "(в группе) ответьте на сообщение и напишите «мацать»\n"
+        "(в группе) ответьте на сообщение и напишите «мацать» или «ущипнуть»\n"
         "(/reset — только для админов)"
     )
 
@@ -240,17 +217,17 @@ def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
-    # команды
     app.add_handler(CommandHandler(["start", "growchest"], start))
     app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("top", top))
-    app.add_handler(CommandHandler("setSize", set_size))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("setSize", set_size))
+    app.add_handler(CommandHandler("top", top))
 
-    # мацать (нужно /setprivacy Disable у бота)
     macat_filter = filters.TEXT & filters.Regex(r"(?i)\bмацать\b") & filters.REPLY
+    shchipok_filter = filters.TEXT & filters.Regex(r"(?i)\bущипнуть\b") & filters.REPLY
     app.add_handler(MessageHandler(macat_filter, macat_handler))
+    app.add_handler(MessageHandler(shchipok_filter, shchipok_handler))
 
     print("Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
