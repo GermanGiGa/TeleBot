@@ -61,12 +61,11 @@ def get_user(user_id: int):
 def update_user(user_id: int, last_ts: int, total_added: float):
     """Обновляет пользователя с жёстким лимитом значений."""
     # Ограничение значений от -10000 до 10000
-    total_added = max(-10000.0, min(float(total_added), 10000.0))
-    con = sqlite3.connect(DB_PATH)
+   con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     cur.execute(
         "UPDATE users SET last_ts=?, total_added=? WHERE user_id=?",
-        (int(last_ts), total_added, int(user_id)),
+        (last_ts, total_added, user_id),
     )
     con.commit()
     con.close()
@@ -175,8 +174,7 @@ async def set_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Лимит значений
-    size = max(-10000.0, min(float(size), 10000.0))
-
+    size = max(-10000, min(size, 10000))   # лимит только для setSize
     # Обновляем БД
     last_ts, _ = get_user(target_user.id)
     update_user(target_user.id, last_ts, size)
