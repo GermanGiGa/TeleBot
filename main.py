@@ -59,9 +59,8 @@ def get_user(user_id: int):
 
 
 def update_user(user_id: int, last_ts: int, total_added: float):
-    """Обновляет пользователя с жёстким лимитом значений."""
-    # Ограничение значений от -10000 до 10000
-   con = sqlite3.connect(DB_PATH)
+    """Обновляет пользователя без ограничений (лимит только в setSize)."""
+    con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     cur.execute(
         "UPDATE users SET last_ts=?, total_added=? WHERE user_id=?",
