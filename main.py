@@ -146,35 +146,36 @@ async def set_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
-    # достаём всех пользователей из БД
+    # 1) Берём всех юзеров из БД
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
     cur.execute("SELECT user_id, total_added FROM users")
     rows = cur.fetchall()
     con.close()
 
+    # 2) Фильтруем по тем, кто реально состоит в ЭТОМ чате
     leaderboard = []
     for uid, total in rows:
         try:
             cm = await context.bot.get_chat_member(chat.id, uid)
-            # считаем участником, если не ушёл и не кикнут
-            if cm.status not in ("left", "kicked"):
-                leaderboard.append((uid, float(total)))
+            if cm.status not in ("left", "kicked"):  # участник здесь
+                # кладём именно объект User, чтобы вывести имя
+                leaderboard.append((cm.user, float(total)))
         except Exception:
-            # пользователя нет в этом чате или нет доступа — пропускаем
+            # нет доступа/пользователь не найден — пропускаем
             continue
 
-    # сортируем по размеру
+    # 3) Сортировка по размеру
     leaderboard.sort(key=lambda x: x[1], reverse=True)
 
     if not leaderboard:
         await update.message.reply_text("Пока никто из участников этого чата ничего не нарастил.")
         return
 
-    # собираем красивый текст ответа
+    # 4) Красивый вывод с кликабельными именами
     lines = ["🏆 Топ участников этого чата:"]
-    for i, (uid, total) in enumerate(leaderboard[:10], start=1):
-        lines.append(f"{i}. <a href='tg://user?id={uid}'>user</a> — {total:.2f} см")
+    for i, (user, total) in enumerate(leaderboard[:10], start=1):
+        lines.append(f"{i}. {user.mention_html()} — {total:.2f} см")
 
     await update.message.reply_html("\n".join(lines))
 
