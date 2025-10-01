@@ -5,10 +5,9 @@ from random import uniform
 
 from telegram import Update
 from telegram.error import RetryAfter
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters,
-    AIORateLimiter
-)
+from telegram.ext import (Application, CommandHandler, 
+    MessageHandler, ContextTypes, filters,)
+    
 
 DB_PATH = "breast_bot.db"
 COOLDOWN_SECONDS = 60 * 60  # 1 час
@@ -284,7 +283,6 @@ def main():
         Application
         .builder()
         .token(TOKEN)
-        .rate_limiter(AIORateLimiter())   # авто-ограничение запросов
         .concurrent_updates(False)        # по одному апдейту за раз
         .build()
     )
