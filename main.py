@@ -118,29 +118,52 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def set_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    uid = update.effective_user.id
+    user = update.effective_user
+    uid = user.id
+
     if uid not in ADMINS:
-        await msg.reply_text("🚫 Эта команда только для админов.")
-        return
-    if not context.args or len(context.args) < 2:
-        await msg.reply_text("⚠️ Использование: /setSize <user_id> <число>")
-        return
-    try:
-        target_user_id = int(context.args[0])
-        size = float(context.args[1])
-        size = max(-10000, min(size, 10000))
-    except ValueError:
-        await msg.reply_text("⚠️ Неверные данные. Пример: /setSize 123456789 50")
+        await update.message.reply_text("🚫 Эта команда доступна только для админов.")
         return
 
-    last_ts, _ = get_user(target_user_id)
-    update_user(target_user_id, last_ts, size)
+    msg = update.message
+
+    # 1. Если команда была reply на сообщение
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        target_user = msg.reply_to_message.from_user
+        if len(context.args) < 1:
+            await msg.reply_text("⚠ Укажите размер. Пример: /setSize 25")
+            return
+        try:
+            size = float(context.args[0])
+        except ValueError:
+            await msg.reply_text("⚠ Размер должен быть числом.")
+            return
+
+    # 2. Если аргументы вручную: /setSize <user_id> <size>
+    elif len(context.args) >= 2:
+        try:
+            target_user_id = int(context.args[0])
+            target_user = await context.bot.get_chat_member(update.effective_chat.id, target_user_id)
+            target_user = target_user.user
+            size = float(context.args[1])
+        except ValueError:
+            await msg.reply_text("⚠ Используйте: /setSize <user_id> <size>")
+            return
+    else:
+        await msg.reply_text("⚠ Ответьте на сообщение или используйте: /setSize <user_id> <size>")
+        return
+
+    # ограничение диапазона от -10000 до 10000
+    size = max(-10000, min(size, 10000))
+
+    # обновляем БД
+    last_ts, _ = get_user(target_user.id)
+    update_user(target_user.id, last_ts, size)
 
     await msg.reply_html(
-        f"⚒ Размер для <a href='tg://user?id={target_user_id}'>пользователя</a> "
-        f"установлен на <b>{size} см</b>."
+        f"✅ Размер для {target_user.mention_html()} установлен: <b>{size:.2f} см</b>"
     )
+
 
 
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
