@@ -145,37 +145,38 @@ async def set_size(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
-    members = []
+
+    # достаём всех пользователей из БД
     con = sqlite3.connect(DB_PATH)
     cur = con.cursor()
-    for member in await context.bot.get_chat_administrators(chat.id) + []:
-        pass  # просто чтоб был вызов
-
-    # Получаем список участников чата
-    async for m in context.bot.get_chat_administrators(chat.id):
-        members.append(m.user.id)
-
-    # Получаем участников чата
-    chat_members = []
-    async for member in context.bot.get_chat(chat.id).iter_members():
-        chat_members.append(member.user.id)
-
-    # Выбираем только тех, кто в БД
     cur.execute("SELECT user_id, total_added FROM users")
     rows = cur.fetchall()
     con.close()
 
     leaderboard = []
     for uid, total in rows:
-        if uid in chat_members:
-            leaderboard.append((uid, total))
+        try:
+            cm = await context.bot.get_chat_member(chat.id, uid)
+            # считаем участником, если не ушёл и не кикнут
+            if cm.status not in ("left", "kicked"):
+                leaderboard.append((uid, float(total)))
+        except Exception:
+            # пользователя нет в этом чате или нет доступа — пропускаем
+            continue
 
+    # сортируем по размеру
     leaderboard.sort(key=lambda x: x[1], reverse=True)
-    text = "🏆 Топ участников этого чата:\n"
-    for i, (uid, total) in enumerate(leaderboard[:10], 1):
-        text += f"{i}. <a href='tg://user?id={uid}'>user</a> — {total:.2f} см\n"
 
-    await update.message.reply_html(text)
+    if not leaderboard:
+        await update.message.reply_text("Пока никто из участников этого чата ничего не нарастил.")
+        return
+
+    # собираем красивый текст ответа
+    lines = ["🏆 Топ участников этого чата:"]
+    for i, (uid, total) in enumerate(leaderboard[:10], start=1):
+        lines.append(f"{i}. <a href='tg://user?id={uid}'>user</a> — {total:.2f} см")
+
+    await update.message.reply_html("\n".join(lines))
 
 
 async def macat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
